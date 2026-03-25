@@ -3,7 +3,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env};
 mod test;
 
 mod types;
-use types::{DataKey, ReleaseStatus, Vault};
+use types::{ContractError, DataKey, ReleaseStatus, Vault};
 
 #[contract]
 pub struct TtlVaultContract;
@@ -164,6 +164,6 @@ impl TtlVaultContract {
         env.storage()
             .persistent()
             .get(&DataKey::Vault(vault_id))
-            .expect("vault not found")
+            .unwrap_or_else(|| panic_with_error!(env, ContractError::VaultNotFound))
     }
 }
