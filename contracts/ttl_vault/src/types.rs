@@ -5,6 +5,7 @@ use soroban_sdk::{contracterror, contracttype, Address};
 pub enum ContractError {
     VaultNotFound = 1,
     InvalidInterval = 2,
+    EmptyVault = 3,
 }
 
 #[contracttype]
