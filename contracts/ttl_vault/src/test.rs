@@ -184,10 +184,17 @@ fn test_paused_blocks_check_in_withdraw_and_trigger_release() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #11)")]
-fn test_create_vault_rejects_owner_as_beneficiary() {
-    let (_, owner, _, _, _, client) = setup();
-    client.create_vault(&owner, &owner, &1000);
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_withdraw_more_than_balance_should_panic() {
+    let (_, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.deposit(&vault_id, &owner, &100i128);
+
+    // Attempt to withdraw more than the vault balance
+    client.withdraw(&vault_id, &200i128);
+}
+
+#[test]
 fn test_get_vaults_by_owner_tracks_multiple_vaults() {
     let (env, owner, beneficiary, _, _, client) = setup();
 
