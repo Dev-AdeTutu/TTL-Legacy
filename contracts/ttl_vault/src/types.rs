@@ -16,6 +16,7 @@ pub enum DataKey {
     TokenAddress,
     Admin,
     Paused,
+    PendingAdmin,
 }
 
 #[contracttype]

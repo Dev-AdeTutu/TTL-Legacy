@@ -33,8 +33,12 @@ pub enum ContractError {
     InsufficientBalance = 8,
     NotAdmin = 9,
     Paused = 10,
+feat/ttl-vault-admin-transfer
+    NoPendingAdmin = 11,
+
     InvalidBps = 11,
     NotExpiringSoon = 12,
+ main
 }
 
 #[contract]
@@ -69,6 +73,36 @@ impl TtlVaultContract {
 
     pub fn is_paused(env: Env) -> bool {
         Self::load_paused(&env)
+    }
+
+    pub fn get_admin(env: Env) -> Address {
+        Self::load_admin(&env)
+    }
+
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
+    /// Propose a new admin. Only the current admin can call this.
+    /// The proposed admin must accept to complete the transfer.
+    pub fn propose_admin(env: Env, new_admin: Address) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+    }
+
+    /// Accept the admin role. Only the proposed admin can call this.
+    /// Completes the two-step admin transfer.
+    pub fn accept_admin(env: Env) {
+        let pending_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NoPendingAdmin));
+
+        pending_admin.require_auth();
+
+        env.storage().instance().set(&DataKey::Admin, &pending_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
     }
 
     // --- vault lifecycle ---
@@ -403,12 +437,15 @@ impl TtlVaultContract {
     }
 
     fn require_admin(env: &Env) {
-        let admin: Address = env
-            .storage()
+        let admin = Self::load_admin(env);
+        admin.require_auth();
+    }
+
+    fn load_admin(env: &Env) -> Address {
+        env.storage()
             .instance()
             .get(&DataKey::Admin)
-            .expect("not initialized");
-        admin.require_auth();
+            .expect("not initialized")
     }
 
     fn load_token(env: &Env) -> Address {
