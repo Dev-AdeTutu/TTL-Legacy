@@ -173,3 +173,65 @@ fn test_cancel_vault_refunds_owner_and_marks_cancelled() {
     assert_eq!(token_client.balance(&owner), 1_000_000i128);
     assert_eq!(client.get_release_status(&vault_id), ReleaseStatus::Cancelled);
 }
+
+#[test]
+fn test_admin_transfer_full_flow() {
+    let (env, _, _, admin, _, client) = setup();
+    let new_admin = Address::generate(&env);
+
+    assert_eq!(client.get_admin(), admin.clone());
+    assert_eq!(client.get_pending_admin(), None);
+
+    client.propose_admin(&new_admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+    client.with_source_address(&new_admin).accept_admin();
+    assert_eq!(client.get_admin(), new_admin.clone());
+    assert_eq!(client.get_pending_admin(), None);
+
+    client.with_source_address(&new_admin).pause();
+    assert!(client.is_paused());
+    client.with_source_address(&new_admin).unpause();
+    assert!(!client.is_paused());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_accept_admin_fails_when_no_pending_admin() {
+    let (env, _, _, _, _, client) = setup();
+    let new_admin = Address::generate(&env);
+
+    // Try to accept without proposing first
+    client.with_source_address(&new_admin).accept_admin();
+}
+
+#[test]
+#[should_panic]
+fn test_accept_admin_fails_when_called_by_wrong_address() {
+    let (env, _, _, _, _, client) = setup();
+    let new_admin = Address::generate(&env);
+    let wrong_admin = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+
+    client.with_source_address(&wrong_admin).accept_admin();
+}
+
+#[test]
+fn test_propose_admin_can_be_called_multiple_times() {
+    let (env, _, _, _, _, client) = setup();
+    let new_admin_1 = Address::generate(&env);
+    let new_admin_2 = Address::generate(&env);
+
+    client.propose_admin(&new_admin_1);
+    assert_eq!(client.get_pending_admin(), Some(new_admin_1));
+
+    client.propose_admin(&new_admin_2);
+    assert_eq!(client.get_pending_admin(), Some(new_admin_2.clone()));
+
+    client.with_source_address(&new_admin_2).accept_admin();
+    assert_eq!(client.get_admin(), new_admin_2.clone());
+    assert_eq!(client.get_pending_admin(), None);
+    client.with_source_address(&new_admin_2).pause();
+    assert!(client.is_paused());
+}
