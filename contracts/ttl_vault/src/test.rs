@@ -525,6 +525,19 @@ fn test_create_vault_zero_interval_fails() {
 }
 
 #[test]
+#[should_panic(expected = "vault not yet expired")]
+fn test_trigger_release_panics_before_expiry() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.deposit(&vault_id, &owner, &500i128);
+    // advance by less than the interval (50 < 100)
+    env.ledger().with_mut(|l| l.timestamp += 50);
+
+    client.trigger_release(&vault_id);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #7)")]
 fn test_check_in_panics_after_release() {
     let (env, owner, beneficiary, _, _, client) = setup();
