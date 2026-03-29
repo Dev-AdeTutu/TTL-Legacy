@@ -448,7 +448,18 @@ fn test_partial_release_fails_if_insufficient_balance() {
 fn test_update_beneficiary_rejects_owner_as_beneficiary() {
     let (_, owner, beneficiary, _, _, client) = setup();
     let vault_id = client.create_vault(&owner, &beneficiary, &1000);
-    client.update_beneficiary(&vault_id, &owner);
+    client.update_beneficiary(&vault_id, &owner, &owner);
+}
+
+#[test]
+fn test_update_beneficiary_requires_auth_before_load() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let other = Address::generate(&env);
+    let vault_id = client.create_vault(&owner, &beneficiary, &1000);
+    let new_beneficiary = Address::generate(&env);
+
+    // other is not the owner, should fail with NotOwner
+    assert!(client.try_update_beneficiary(&vault_id, &other, &new_beneficiary).is_err());
 }
 
 #[test]
@@ -849,7 +860,7 @@ fn test_update_beneficiary_updates_index() {
     assert_eq!(client.get_vaults_by_beneficiary(&old_beneficiary, &0u32, &10u32), vec![&env, vault_id]);
     assert_eq!(client.get_vaults_by_beneficiary(&new_beneficiary, &0u32, &10u32), vec![&env]);
 
-    client.update_beneficiary(&vault_id, &new_beneficiary);
+    client.update_beneficiary(&vault_id, &owner, &new_beneficiary);
 
     // old beneficiary no longer sees the vault
     assert_eq!(client.get_vaults_by_beneficiary(&old_beneficiary, &0u32, &10u32), vec![&env]);

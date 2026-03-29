@@ -875,20 +875,27 @@ impl TtlVaultContract {
     /// # Arguments
     /// * `env` - The Soroban environment
     /// * `vault_id` - The unique identifier of the vault
+    /// * `caller` - The address of the caller (must be the vault owner)
     /// * `new_beneficiary` - The new beneficiary address
     ///
-    /// # Panics
-    /// * Panics if the caller is not the vault owner
-    /// * Panics if the vault is not in Locked status (already released or cancelled)
-    pub fn update_beneficiary(env: Env, vault_id: u64, new_beneficiary: Address) {
+    /// # Returns
+    /// `Ok(())` on success, `Err` on failure
+    ///
+    /// # Errors
+    /// * `ContractError::NotOwner` - If caller is not the vault owner
+    /// * `ContractError::AlreadyReleased` - If vault is not in Locked status
+    pub fn update_beneficiary(env: Env, vault_id: u64, caller: Address, new_beneficiary: Address) -> Result<(), ContractError> {
+        caller.require_auth();
         let mut vault = Self::load_vault(&env, vault_id);
-        vault.owner.require_auth();
+        if caller != vault.owner {
+            return Err(ContractError::NotOwner);
+        }
         if vault.status != ReleaseStatus::Locked {
-            panic_with_error!(&env, ContractError::AlreadyReleased);
+            return Err(ContractError::AlreadyReleased);
         }
 
         if vault.owner == new_beneficiary {
-            panic_with_error!(&env, ContractError::InvalidBeneficiary);
+            return Err(ContractError::InvalidBeneficiary);
         }
 
         let old_beneficiary = vault.beneficiary.clone();
@@ -899,6 +906,7 @@ impl TtlVaultContract {
             Self::remove_beneficiary_vault_id(&env, &old_beneficiary, vault_id);
             Self::add_beneficiary_vault_id(&env, &new_beneficiary, vault_id);
         }
+        Ok(())
     }
 
     /// Updates the check-in interval for a vault.
