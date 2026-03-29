@@ -638,6 +638,11 @@ impl TtlVaultContract {
         if total_bps != 10_000 {
             return Err(ContractError::InvalidBps);
         }
+        for entry in beneficiaries.iter() {
+            if entry.address == vault.owner {
+                return Err(ContractError::InvalidBeneficiary);
+            }
+        }
         vault.beneficiaries = beneficiaries;
         Self::save_vault(&env, vault_id, &vault);
         Ok(())
