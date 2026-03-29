@@ -673,3 +673,62 @@ fn test_deposit_rejects_balance_overflow() {
 
     assert!(result.is_err(), "expected overflow error on deposit exceeding i128::MAX");
 }
+
+// ---- Admin transfer tests ----
+
+#[test]
+fn test_accept_admin_fails_without_proposal() {
+    // No propose_admin called — accept_admin must panic with NoPendingAdmin (#11)
+    let (env, _, _, _, _, client) = setup();
+    let stranger = Address::generate(&env);
+    assert!(
+        client.with_source_address(&stranger).try_accept_admin().is_err(),
+        "accept_admin should fail when no pending admin is set"
+    );
+}
+
+#[test]
+fn test_accept_admin_fails_for_wrong_address() {
+    // propose_admin sets new_admin, but a different address tries to accept
+    let (env, _, _, _, _, client) = setup();
+    let new_admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+    assert!(
+        client.with_source_address(&impostor).try_accept_admin().is_err(),
+        "accept_admin should fail for an address that is not the pending admin"
+    );
+    // admin must remain unchanged
+    assert_ne!(client.get_admin(), impostor);
+}
+
+#[test]
+fn test_propose_admin_fails_for_non_admin() {
+    // A non-admin calling propose_admin must be rejected
+    let (env, owner, _, _, _, client) = setup();
+    let attacker = Address::generate(&env);
+    assert!(
+        client.with_source_address(&attacker).try_propose_admin(&owner).is_err(),
+        "propose_admin should fail for non-admin caller"
+    );
+}
+
+#[test]
+fn test_get_pending_admin_returns_none_before_proposal() {
+    let (_, _, _, _, _, client) = setup();
+    assert_eq!(client.get_pending_admin(), None);
+}
+
+#[test]
+fn test_pending_admin_cleared_after_accept() {
+    let (env, _, _, _, _, client) = setup();
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+    client.with_source_address(&new_admin).accept_admin();
+    assert_eq!(client.get_pending_admin(), None);
+    assert_eq!(client.get_admin(), new_admin);
+}
