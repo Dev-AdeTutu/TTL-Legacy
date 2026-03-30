@@ -1127,6 +1127,7 @@ fn test_get_active_vaults_by_beneficiary_excludes_released() {
     );
 
     // expire and release
+    client.deposit(&vault_id, &owner, &1_000i128);
     env.ledger().with_mut(|l| l.timestamp += 101);
     client.trigger_release(&vault_id);
 
@@ -1353,7 +1354,7 @@ fn test_withdraw_rejected_on_released_vault() {
         .try_withdraw(&vault_id, &owner, &1i128)
         .unwrap_err()
         .unwrap();
-    assert_eq!(err, soroban_sdk::Error::from_contract_error(7));
+    assert_eq!(err, ContractError::AlreadyReleased);
 }
 
 #[test]
