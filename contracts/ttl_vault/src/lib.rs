@@ -87,7 +87,7 @@ impl TtlVaultContract {
         {
             panic_with_error!(&env, ContractError::AlreadyInitialized);
         }
-        if xlm_token == admin {
+        if xlm_token  == admin {
             panic_with_error!(&env, ContractError::DistinctAddressesRequired);
         }
         admin.require_auth();
