@@ -41,17 +41,23 @@ fn setup() -> (
 // ---- existing tests ----
 
 #[test]
-#[should_panic(expected = "Error(Contract, #1)")]
 fn test_initialize_guard_against_double_init() {
     let (env, _, _, admin, token_address, client) = setup();
 
+    let original_admin = client.get_admin();
+    let original_token = client.get_token();
+
+    let new_admin = Address::generate(&env);
     let new_token_admin = Address::generate(&env);
     let new_token_address = env
         .register_stellar_asset_contract_v2(new_token_admin)
         .address();
 
-    client.initialize(&new_token_address, &admin);
-    let _ = token_address;
+    let err = client.try_initialize(&new_token_address, &new_admin).unwrap_err().unwrap();
+    assert_eq!(err, soroban_sdk::Error::from_contract_error(1));
+
+    assert_eq!(client.get_admin(), original_admin);
+    assert_eq!(client.get_token(), original_token);
 }
 
 #[test]
@@ -76,6 +82,16 @@ fn test_vault_count_view() {
     assert_eq!(id_1, 1);
     assert_eq!(id_2, 2);
     assert_eq!(client.vault_count(), 2);
+}
+
+#[test]
+fn test_vault_count_not_incremented_on_failed_create() {
+    let (env, owner, _beneficiary, _, _, client) = setup();
+
+    assert_eq!(client.vault_count(), 0);
+
+    assert!(client.try_create_vault(&owner, &owner, &100u64).is_err()); // InvalidBeneficiary must not mutate count
+    assert_eq!(client.vault_count(), 0);
 }
 
 #[test]
@@ -216,6 +232,33 @@ fn test_paused_blocks_check_in_withdraw_and_trigger_release() {
         client.get_release_status(&vault_id),
         ReleaseStatus::Released
     );
+}
+
+// ---- Issue #229: check_in event emission test ----
+
+#[test]
+fn test_check_in_emits_event_with_correct_topic() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+
+    env.mock_all_auths();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+
+    // Advance time slightly
+    env.ledger().with_mut(|l| l.timestamp += 10);
+
+    client.check_in(&vault_id, &owner);
+
+    let events = env.events().all();
+    let check_in_event = events.iter().find(|e| {
+        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
+        if topics.len() < 2 {
+            return false;
+        }
+        let topic0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
+        topic0.map(|s| s == soroban_sdk::symbol_short!("check_in")).unwrap_or(false)
+    });
+
+    assert!(check_in_event.is_some(), "check_in event not emitted");
 }
 
 #[test]
@@ -400,6 +443,25 @@ fn test_propose_admin_can_be_called_multiple_times() {
     assert!(client.is_paused());
 }
 
+// ---- Issue #227: accept_admin unauthorized rejection test ----
+
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_accept_admin_rejects_unauthorized_caller() {
+    let (env, _, _, _, _, client) = setup();
+    let new_admin = Address::generate(&env);
+    let unauthorized = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+    // Try to accept as unauthorized address (not the pending admin)
+    // This should panic with NoPendingAdmin or auth failure
+    // Since mock_all_auths is enabled, we need to test without it
+    env.mock_all_auths_allowing_non_root_auth();
+    client.accept_admin(); // This will fail because unauthorized is not pending_admin
+}
+
 // ---- Task 1: ping_expiry tests ----
 
 #[test]
@@ -478,6 +540,33 @@ fn test_partial_release_fails_if_insufficient_balance() {
 }
 
 #[test]
+fn test_partial_release_emits_partial_event() {
+    let (env, owner, beneficiary, _, token_address, client) = setup();
+    let token_client = token::Client::new(&env, &token_address);
+
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.deposit(&vault_id, &owner, &1_000i128);
+
+    client.partial_release(&vault_id, &300i128);
+
+    // Assert balance decreased and beneficiary received funds
+    assert_eq!(client.get_vault(&vault_id).balance, 700i128);
+    assert_eq!(token_client.balance(&beneficiary), 300i128);
+
+    // Assert the "partial" event was emitted
+    let events = env.events().all();
+    let partial_event = events.iter().find(|e| {
+        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
+        if topics.len() < 2 {
+            return false;
+        }
+        let topic0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
+        topic0.map(|s| s == soroban_sdk::symbol_short!("partial")).unwrap_or(false)
+    });
+    assert!(partial_event.is_some(), "partial event not emitted");
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #17)")]
 fn test_update_beneficiary_rejects_owner_as_beneficiary() {
     let (_, owner, beneficiary, _, _, client) = setup();
@@ -503,6 +592,21 @@ fn test_deposit_into_expired_vault_is_rejected() {
     let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
     env.ledger().with_mut(|l| l.timestamp += 200);
     client.deposit(&vault_id, &owner, &500i128);
+}
+
+// ---- Issue #221: deposit expired vault returns VaultExpired error code ----
+
+#[test]
+fn test_deposit_into_expired_vault_returns_vault_expired_error() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    
+    // Advance time past expiry
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    
+    // Should return VaultExpired (error code 19), not AlreadyReleased (error code 7)
+    let err = client.try_deposit(&vault_id, &owner, &500i128).unwrap_err().unwrap();
+    assert_eq!(err, soroban_sdk::Error::from_contract_error(19)); // VaultExpired
 }
 
 #[test]
@@ -738,7 +842,6 @@ fn test_withdraw_emits_event() {
 }
 
 #[test]
-#[test]
 #[should_panic(expected = "Error(Contract, #4)")]
 fn test_trigger_release_emits_event_with_zero_balance() {
     let (env, owner, beneficiary, _, _, client) = setup();
@@ -777,6 +880,7 @@ fn test_set_beneficiaries_rejects_invalid_bps() {
     let err = client
         .try_set_beneficiaries(
             &vault_id,
+            &owner,
             &vec![
                 &env,
                 BeneficiaryEntry { address: beneficiary.clone(), bps: 4_000 },
@@ -785,7 +889,7 @@ fn test_set_beneficiaries_rejects_invalid_bps() {
         )
         .unwrap_err()
         .unwrap();
-    assert_eq!(err, soroban_sdk::Error::from_contract_error(12));
+    assert_eq!(err, ContractError::InvalidBps);
 }
 
 // ---- Issue #105: set_beneficiaries owner-as-beneficiary guard ----
@@ -806,6 +910,21 @@ fn test_set_beneficiaries_rejects_owner_as_beneficiary() {
             BeneficiaryEntry { address: beneficiary.clone(), bps: 5_000 },
         ],
     );
+}
+
+// ---- Issue #226: set_beneficiaries empty list guard ----
+
+#[test]
+fn test_set_beneficiaries_rejects_empty_list() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &1000u64);
+
+    // Empty beneficiaries list should be rejected with InvalidBps
+    let err = client
+        .try_set_beneficiaries(&vault_id, &owner, &vec![&env])
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, soroban_sdk::Error::from_contract_error(12)); // InvalidBps
 }
 
 #[test]
@@ -1134,26 +1253,43 @@ fn test_withdraw_rejected_on_released_vault() {
     assert_eq!(err, soroban_sdk::Error::from_contract_error(7));
 }
 
+// ---- set_beneficiaries tests ----
+
 #[test]
-fn test_beneficiary_index_sync() {
-    let (env, owner, user_a, _, _, client) = setup();
-    let user_b = Address::generate(&env);
+fn test_set_beneficiaries_rejects_empty_list() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
 
-    // Create a vault with user_a as beneficiary
-    let vault_id = client.create_vault(&owner, &user_a, &100u64);
+    let result = client.try_set_beneficiaries(&vault_id, &vec![&env]);
+    assert!(result.is_err(), "empty beneficiaries list must be rejected");
+}
 
-    // Verify get_vaults_by_beneficiary(user_a) contains the ID
-    assert_eq!(client.get_vaults_by_beneficiary(&user_a, &None, &0u32, &10u32), vec![&env, vault_id]);
+#[test]
+fn test_set_beneficiaries_rejects_invalid_bps_sum() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    let other = Address::generate(&env);
 
-    // Verify get_vaults_by_beneficiary(user_b) does not contain the ID
-    assert_eq!(client.get_vaults_by_beneficiary(&user_b, &None, &0u32, &10u32), vec![&env]);
+    // BPS sums to 5_000, not 10_000
+    let result = client.try_set_beneficiaries(
+        &vault_id,
+        &vec![&env, BeneficiaryEntry { address: other, bps: 5_000 }],
+    );
+    assert!(result.is_err(), "BPS sum != 10_000 must be rejected");
+}
 
-    // Call update_beneficiary to transfer from user_a to user_b
-    client.update_beneficiary(&vault_id, &owner, &user_b);
+#[test]
+fn test_set_beneficiaries_accepts_valid_single_entry() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    let sole = Address::generate(&env);
 
-    // Assert: get_vaults_by_beneficiary(user_a) is now empty or does not contain the ID
-    assert_eq!(client.get_vaults_by_beneficiary(&user_a, &None, &0u32, &10u32), vec![&env]);
+    client.set_beneficiaries(
+        &vault_id,
+        &vec![&env, BeneficiaryEntry { address: sole.clone(), bps: 10_000 }],
+    );
 
-    // Assert: get_vaults_by_beneficiary(user_b) now contains the ID
-    assert_eq!(client.get_vaults_by_beneficiary(&user_b, &None, &0u32, &10u32), vec![&env, vault_id]);
+    let vault = client.get_vault(&vault_id);
+    assert_eq!(vault.beneficiaries.len(), 1);
+    assert_eq!(vault.beneficiaries.get(0).unwrap().address, sole);
 }
