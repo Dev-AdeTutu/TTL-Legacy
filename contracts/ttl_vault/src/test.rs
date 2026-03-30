@@ -320,6 +320,26 @@ fn test_transfer_ownership_preserves_beneficiary_index() {
 }
 
 #[test]
+fn test_transfer_ownership_emits_event() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let new_owner = Address::generate(&env);
+
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.transfer_ownership(&vault_id, &owner, &new_owner);
+
+    let events = env.events().all();
+    let own_xfer_event = events.iter().find(|e| {
+        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
+        if topics.len() < 2 {
+            return false;
+        }
+        let topic0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
+        topic0.map(|s| s == soroban_sdk::symbol_short!("own_xfer")).unwrap_or(false)
+    });
+    assert!(own_xfer_event.is_some(), "own_xfer event not emitted on transfer_ownership");
+}
+
+#[test]
 fn test_cancel_vault_refunds_owner_and_marks_cancelled() {
     let (env, owner, beneficiary, _, token_address, client) = setup();
 
