@@ -310,13 +310,34 @@ fn test_transfer_ownership_preserves_beneficiary_index() {
     let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
 
     // beneficiary index contains the vault before transfer
-    assert_eq!(client.get_vaults_by_beneficiary(&beneficiary, &0u32, &10u32), vec![&env, vault_id]);
+    assert_eq!(client.get_vaults_by_beneficiary(&beneficiary, &None, &0u32, &10u32), vec![&env, vault_id]);
 
     client.transfer_ownership(&vault_id, &owner, &new_owner);
 
     // vault.beneficiary is unchanged — index must still be intact
     assert_eq!(client.get_vault(&vault_id).beneficiary, beneficiary);
-    assert_eq!(client.get_vaults_by_beneficiary(&beneficiary, &0u32, &10u32), vec![&env, vault_id]);
+    assert_eq!(client.get_vaults_by_beneficiary(&beneficiary, &None, &0u32, &10u32), vec![&env, vault_id]);
+}
+
+/// If new_owner is already a beneficiary of a *different* vault, transferring
+/// ownership of an unrelated vault must not corrupt that beneficiary index entry.
+#[test]
+fn test_transfer_ownership_does_not_corrupt_new_owners_beneficiary_index() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let new_owner = Address::generate(&env);
+    let other_owner = Address::generate(&env);
+
+    // vault_a: new_owner is the beneficiary
+    let vault_a = client.create_vault(&other_owner, &new_owner, &100u64);
+    // vault_b: owned by owner, beneficiary is someone else
+    let vault_b = client.create_vault(&owner, &beneficiary, &100u64);
+
+    assert_eq!(client.get_vaults_by_beneficiary(&new_owner, &None, &0u32, &10u32), vec![&env, vault_a]);
+
+    // Transfer vault_b to new_owner — must not touch new_owner's beneficiary index
+    client.transfer_ownership(&vault_b, &owner, &new_owner);
+
+    assert_eq!(client.get_vaults_by_beneficiary(&new_owner, &None, &0u32, &10u32), vec![&env, vault_a]);
 }
 
 #[test]
