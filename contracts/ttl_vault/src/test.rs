@@ -540,6 +540,33 @@ fn test_partial_release_fails_if_insufficient_balance() {
 }
 
 #[test]
+fn test_partial_release_emits_partial_event() {
+    let (env, owner, beneficiary, _, token_address, client) = setup();
+    let token_client = token::Client::new(&env, &token_address);
+
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    client.deposit(&vault_id, &owner, &1_000i128);
+
+    client.partial_release(&vault_id, &300i128);
+
+    // Assert balance decreased and beneficiary received funds
+    assert_eq!(client.get_vault(&vault_id).balance, 700i128);
+    assert_eq!(token_client.balance(&beneficiary), 300i128);
+
+    // Assert the "partial" event was emitted
+    let events = env.events().all();
+    let partial_event = events.iter().find(|e| {
+        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
+        if topics.len() < 2 {
+            return false;
+        }
+        let topic0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
+        topic0.map(|s| s == soroban_sdk::symbol_short!("partial")).unwrap_or(false)
+    });
+    assert!(partial_event.is_some(), "partial event not emitted");
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #17)")]
 fn test_update_beneficiary_rejects_owner_as_beneficiary() {
     let (_, owner, beneficiary, _, _, client) = setup();
@@ -814,7 +841,6 @@ fn test_withdraw_emits_event() {
     assert!(withdraw_event.is_some(), "withdraw event not emitted");
 }
 
-#[test]
 #[test]
 #[should_panic(expected = "Error(Contract, #4)")]
 fn test_trigger_release_emits_event_with_zero_balance() {
