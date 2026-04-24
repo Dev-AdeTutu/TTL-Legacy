@@ -710,6 +710,29 @@ fn test_update_metadata_rejects_oversized_value() {
 }
 
 #[test]
+fn test_update_metadata_emits_event() {
+    let (env, owner, beneficiary, _, _, client) = setup();
+    let vault_id = client.create_vault(&owner, &beneficiary, &100u64);
+    let new_meta = soroban_sdk::String::from_str(&env, "ipfs://Qm123");
+
+    client.update_metadata(&vault_id, &owner, &new_meta);
+
+    let event = env.events().all().iter().find(|e| {
+        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.1.clone().into_val(&env);
+        topics
+            .get(0)
+            .and_then(|v| v.try_into_val(&env).ok())
+            .map(|s: soroban_sdk::Symbol| s == types::UPDATE_METADATA_TOPIC)
+            .unwrap_or(false)
+    });
+    assert!(event.is_some(), "upd_meta event not emitted");
+
+    let data = event.unwrap().2.clone();
+    let emitted: soroban_sdk::String = data.try_into_val(&env).unwrap();
+    assert_eq!(emitted, new_meta);
+}
+
+#[test]
 fn test_get_contract_token_returns_correct_address() {
     let (_, _, _, _, token_address, client) = setup();
     assert_eq!(client.get_contract_token(), token_address);

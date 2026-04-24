@@ -10,7 +10,7 @@ use types::{
     BeneficiaryEntry, DataKey, ReleaseEvent, ReleaseStatus, Vault, EXPIRY_WARNING_THRESHOLD,
     BENEFICIARY_UPDATED_TOPIC, CANCEL_TOPIC, CHECK_IN_TOPIC, DEPOSIT_TOPIC, OWNERSHIP_TOPIC,
     PING_EXPIRY_TOPIC, RELEASE_TOPIC, SET_BENEFICIARIES_TOPIC, UPDATE_INTERVAL_TOPIC,
-    VAULT_CREATED_TOPIC, WITHDRAW_TOPIC, MAX_METADATA_LEN,
+    UPDATE_METADATA_TOPIC, VAULT_CREATED_TOPIC, WITHDRAW_TOPIC, MAX_METADATA_LEN,
 };
 
 #[cfg(test)]
@@ -809,9 +809,10 @@ impl TtlVaultContract {
             if vault.status != ReleaseStatus::Locked {
                 return Err(ContractError::AlreadyReleased);
             }
-            vault.metadata = metadata;
+            vault.metadata = metadata.clone();
             Self::save_vault(&env, vault_id, &vault);
             env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+            env.events().publish((UPDATE_METADATA_TOPIC, vault_id), metadata);
             Ok(())
         }
 
