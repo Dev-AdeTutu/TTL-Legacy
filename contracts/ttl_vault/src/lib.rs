@@ -485,6 +485,7 @@ impl TtlVaultContract {
         }
 
         if total_amount == 0 {
+            env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
             return;
         }
 
