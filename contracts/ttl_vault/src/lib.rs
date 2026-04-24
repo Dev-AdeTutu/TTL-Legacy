@@ -335,8 +335,8 @@ impl TtlVaultContract {
             metadata,
         };
         Self::save_vault(&env, vault_id, &vault);
-        Self::add_owner_vault_id(&env, &owner, vault_id);
-        Self::add_beneficiary_vault_id(&env, &beneficiary, vault_id);
+        Self::add_owner_vault_id(&env, &owner, vault_id, check_in_interval);
+        Self::add_beneficiary_vault_id(&env, &beneficiary, vault_id, check_in_interval);
         // VaultCount is an incrementing generation ID and must be updated
         // only after the vault and its owner/beneficiary indexes are persisted.
         //
@@ -390,7 +390,7 @@ impl TtlVaultContract {
         vault.last_check_in = env.ledger().timestamp();
         Self::save_vault(&env, vault_id, &vault);
         let owner_ids = Self::load_owner_vault_ids(&env, &vault.owner);
-        Self::save_owner_vault_ids(&env, &vault.owner, &owner_ids);
+        Self::save_owner_vault_ids(&env, &vault.owner, &owner_ids, vault.check_in_interval);
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
         env.events().publish((CHECK_IN_TOPIC, vault_id), vault.last_check_in);
         Ok(())
@@ -487,6 +487,7 @@ impl TtlVaultContract {
         }
 
         if total_amount == 0 {
+            env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
             return;
         }
 
@@ -1027,8 +1028,8 @@ impl TtlVaultContract {
         Self::save_vault(&env, vault_id, &vault);
 
         if old_beneficiary != new_beneficiary {
-            Self::remove_beneficiary_vault_id(&env, &old_beneficiary, vault_id);
-            Self::add_beneficiary_vault_id(&env, &new_beneficiary, vault_id);
+            Self::remove_beneficiary_vault_id(&env, &old_beneficiary, vault_id, vault.check_in_interval);
+            Self::add_beneficiary_vault_id(&env, &new_beneficiary, vault_id, vault.check_in_interval);
         }
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
         Ok(())
@@ -1122,8 +1123,8 @@ impl TtlVaultContract {
         vault.balance = 0;
         vault.status = ReleaseStatus::Cancelled;
         Self::save_vault(&env, vault_id, &vault);
-        Self::remove_owner_vault_id(&env, &vault.owner, vault_id);
-        Self::remove_beneficiary_vault_id(&env, &vault.beneficiary, vault_id);
+        Self::remove_owner_vault_id(&env, &vault.owner, vault_id, vault.check_in_interval);
+        Self::remove_beneficiary_vault_id(&env, &vault.beneficiary, vault_id, vault.check_in_interval);
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
         env.events().publish((CANCEL_TOPIC, vault_id), (vault.owner, refund_amount));
         Ok(())
@@ -1173,8 +1174,8 @@ impl TtlVaultContract {
                 return Err(ContractError::InvalidBeneficiary);
             }
             if old_owner != new_owner {
-                Self::remove_owner_vault_id(&env, &old_owner, vault_id);
-                Self::add_owner_vault_id(&env, &new_owner, vault_id);
+                Self::remove_owner_vault_id(&env, &old_owner, vault_id, vault.check_in_interval);
+                Self::add_owner_vault_id(&env, &new_owner, vault_id, vault.check_in_interval);
             }
             vault.owner = new_owner.clone();
             Self::save_vault(&env, vault_id, &vault);
@@ -1263,19 +1264,20 @@ impl TtlVaultContract {
             .unwrap_or(Vec::new(env))
     }
 
-    fn save_owner_vault_ids(env: &Env, owner: &Address, vault_ids: &Vec<u64>) {
+    fn save_owner_vault_ids(env: &Env, owner: &Address, vault_ids: &Vec<u64>, check_in_interval: u64) {
         let key = DataKey::OwnerVaults(owner.clone());
+        let ttl = vault_ttl_ledgers(check_in_interval);
         env.storage().persistent().set(&key, vault_ids);
-        env.storage().persistent().extend_ttl(&key, VAULT_TTL_THRESHOLD, VAULT_TTL_LEDGERS);
+        env.storage().persistent().extend_ttl(&key, VAULT_TTL_THRESHOLD, ttl);
     }
 
-    fn add_owner_vault_id(env: &Env, owner: &Address, vault_id: u64) {
+    fn add_owner_vault_id(env: &Env, owner: &Address, vault_id: u64, check_in_interval: u64) {
         let mut vault_ids = Self::load_owner_vault_ids(env, owner);
         vault_ids.push_back(vault_id);
-        Self::save_owner_vault_ids(env, owner, &vault_ids);
+        Self::save_owner_vault_ids(env, owner, &vault_ids, check_in_interval);
     }
 
-    fn remove_owner_vault_id(env: &Env, owner: &Address, vault_id: u64) {
+    fn remove_owner_vault_id(env: &Env, owner: &Address, vault_id: u64, check_in_interval: u64) {
         let vault_ids = Self::load_owner_vault_ids(env, owner);
         let mut next_ids = Vec::new(env);
         for id in vault_ids.iter() {
@@ -1288,7 +1290,7 @@ impl TtlVaultContract {
             let key = DataKey::OwnerVaults(owner.clone());
             env.storage().persistent().remove(&key);
         } else {
-            Self::save_owner_vault_ids(env, owner, &next_ids);
+            Self::save_owner_vault_ids(env, owner, &next_ids, check_in_interval);
         }
     }
 
@@ -1309,19 +1311,20 @@ impl TtlVaultContract {
             .unwrap_or(Vec::new(env))
     }
 
-    fn save_beneficiary_vault_ids(env: &Env, beneficiary: &Address, vault_ids: &Vec<u64>) {
+    fn save_beneficiary_vault_ids(env: &Env, beneficiary: &Address, vault_ids: &Vec<u64>, check_in_interval: u64) {
         let key = DataKey::BeneficiaryVaults(beneficiary.clone());
+        let ttl = vault_ttl_ledgers(check_in_interval);
         env.storage().persistent().set(&key, vault_ids);
-        env.storage().persistent().extend_ttl(&key, VAULT_TTL_THRESHOLD, VAULT_TTL_LEDGERS);
+        env.storage().persistent().extend_ttl(&key, VAULT_TTL_THRESHOLD, ttl);
     }
 
-    fn add_beneficiary_vault_id(env: &Env, beneficiary: &Address, vault_id: u64) {
+    fn add_beneficiary_vault_id(env: &Env, beneficiary: &Address, vault_id: u64, check_in_interval: u64) {
         let mut vault_ids = Self::load_beneficiary_vault_ids(env, beneficiary);
         vault_ids.push_back(vault_id);
-        Self::save_beneficiary_vault_ids(env, beneficiary, &vault_ids);
+        Self::save_beneficiary_vault_ids(env, beneficiary, &vault_ids, check_in_interval);
     }
 
-    fn remove_beneficiary_vault_id(env: &Env, beneficiary: &Address, vault_id: u64) {
+    fn remove_beneficiary_vault_id(env: &Env, beneficiary: &Address, vault_id: u64, check_in_interval: u64) {
         let vault_ids = Self::load_beneficiary_vault_ids(env, beneficiary);
         let mut next_ids = Vec::new(env);
         for id in vault_ids.iter() {
@@ -1334,7 +1337,7 @@ impl TtlVaultContract {
             let key = DataKey::BeneficiaryVaults(beneficiary.clone());
             env.storage().persistent().remove(&key);
         } else {
-            Self::save_beneficiary_vault_ids(env, beneficiary, &next_ids);
+            Self::save_beneficiary_vault_ids(env, beneficiary, &next_ids, check_in_interval);
         }
     }
 
