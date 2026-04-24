@@ -780,7 +780,7 @@ fn test_create_vault_fails_when_interval_exceeds_max() {
     let (_, owner, beneficiary, _, _, client) = setup();
     client.set_max_check_in_interval(&1_000u64);
     let result = client.try_create_vault(&owner, &beneficiary, &2_000u64);
-    assert_eq!(result.unwrap().unwrap_err(), soroban_sdk::Error::from_contract_error(ContractError::IntervalTooHigh as u32));
+    assert_eq!(result.unwrap_err().unwrap(), soroban_sdk::Error::from_contract_error(ContractError::IntervalTooHigh as u32));
 }
 
 #[test]
@@ -815,7 +815,7 @@ fn test_create_vault_fails_when_interval_below_min() {
     let (_, owner, beneficiary, _, _, client) = setup();
     client.set_min_check_in_interval(&3_600u64);
     let result = client.try_create_vault(&owner, &beneficiary, &100u64);
-    assert_eq!(result.unwrap().unwrap_err(), soroban_sdk::Error::from_contract_error(ContractError::IntervalTooLow as u32));
+    assert_eq!(result.unwrap_err().unwrap(), soroban_sdk::Error::from_contract_error(ContractError::IntervalTooLow as u32));
 }
 
 #[test]
